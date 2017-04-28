@@ -157,9 +157,11 @@ Resources:
           Name: LoadBalancer
           Value:  !GetAtt CustomResource.ALBId
 
-      EvaluationPeriods: 1
+      EvaluationPeriods: 2
       MetricName: HealthyHostCount
       Namespace: AWS/ApplicationELB
+      OKActions:
+        - Fn::ImportValue: !Sub ${env}-ServiceHealthTopic
       Period: 60
       Statistic: Maximum
       Threshold: 0.0
@@ -178,7 +180,7 @@ Resources:
           URL:
             Fn::Join:
               - ""
-              - - "http://core2-proxy."
+              - - "http://core-proxy."
                 - Fn::ImportValue: !Sub ${env}-PrivateDomain
                 - "/mongo-backup/"
       FunctionName: !Sub ${env}-mongo-backup
@@ -239,7 +241,7 @@ Resources:
           Values:
             - !Sub /${name}/*
       ListenerArn: !Ref listenerarn
-      Priority: !Ref priority
+      Priority: 34
 
   ScheduledEvent:
     Properties:
