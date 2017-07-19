@@ -170,7 +170,7 @@ Resources:
   Lambda:
     Properties:
       Code:
-        S3Bucket: !Sub net-openwhere-devops-${env}
+        S3Bucket: !Sub net-platform-devops-${env}
         S3Key: !Sub lambda/mongoBackup-${version}.zip
       Description: Calls mongo-backup agent to start snapshot
       Environment:
