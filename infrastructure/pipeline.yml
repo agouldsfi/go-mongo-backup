@@ -1,0 +1,254 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CodePipeline go-mongo-backup
+Parameters:
+  DeployOnly:
+    AllowedValues:
+    - 'false'
+    - 'true'
+    Default: 'true'
+    Description: Deploy only? (true/false)
+    Type: String
+
+Conditions:
+  DeployOnly: !Equals [!Ref 'DeployOnly', 'true']
+  NotDeployOnly: !Equals [!Ref 'DeployOnly', 'false']
+
+Resources:
+  EnvironmentName:
+    Type: Custom::CfnParamStore
+    Properties:
+      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:CfnGetParamStore
+      ParameterName: EnvironmentName
+      WithDecryption: False
+
+  PodName:
+    Type: Custom::CfnParamStore
+    Properties:
+      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:CfnGetParamStore
+      ParameterName: PodName
+      WithDecryption: False
+
+  GitBranch:
+    Type: Custom::CfnParamStore
+    Properties:
+      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:CfnGetParamStore
+      ParameterName: GitBranch
+      WithDecryption: False
+
+  GitOAuthToken:
+    Type: Custom::CfnParamStore
+    Properties:
+      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:CfnGetParamStore
+      ParameterName:
+        !If ['DeployOnly', !Ref 'AWS::NoValue', 'GitOAuthToken']
+      WithDecryption: True
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement: 
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+        Version: 2012-10-17
+      Path: /service-role/
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Statement: 
+              - Action: "*"
+                Effect: Allow
+                Resource: "*"
+
+  Build:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Description: Build and test code
+      Environment: 
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables:
+          - Name: ENV
+            Value: !GetAtt EnvironmentName.ParameterValue
+          - Name: IMAGE_NAME
+            Value: mongo-backup
+        Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/build-image:latest
+        PrivilegedMode: true
+        Type: LINUX_CONTAINER
+      Name: mongo-backup-build
+      ServiceRole: !GetAtt BuildRole.Arn
+      Source:
+        Type: CODEPIPELINE
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement: 
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+        Version: 2012-10-17
+      Path: /
+      Policies:
+        - PolicyName: CodePipelineAccess
+          PolicyDocument:
+            Statement: 
+              - Action: "*"
+                Effect: Allow
+                Resource: "*"
+
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement: 
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+        Version: 2012-10-17
+      Path: /
+      Policies:
+        - PolicyName: CloudFormationAccess
+          PolicyDocument:
+            Statement: 
+              - Action: "*"
+                Effect: Allow
+                Resource: "*"
+
+  Pipeline: 
+    Condition: 'NotDeployOnly'
+    Type: AWS::CodePipeline::Pipeline
+    Properties: 
+      ArtifactStore: 
+        Type: S3
+        Location: !Join ['', [ 'pipeline-artifacts-', !GetAtt PodName.ParameterValue]]
+      Name: mongo-backup
+      RoleArn: !GetAtt PipelineRole.Arn
+      Stages: 
+        - Name: Source
+          Actions: 
+            - Name: go-mongo-backup
+              ActionTypeId: 
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: 1
+              Configuration: 
+                Branch: !GetAtt GitBranch.ParameterValue
+                OAuthToken: !GetAtt GitOAuthToken.ParameterValue
+                Owner: OpenWhere
+                Repo: go-mongo-backup
+              OutputArtifacts: 
+                - Name: Source
+        - Name: Build
+          Actions: 
+            - Name: build
+              ActionTypeId: 
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration: 
+                ProjectName: !Ref Build
+              InputArtifacts: 
+                - Name: Source
+              OutputArtifacts: 
+                - Name: Build
+        - Name: Deploy
+          Actions: 
+            - Name: mongo-backup-core
+              ActionTypeId: 
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              Configuration: 
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_IAM
+                RoleArn: !GetAtt CloudFormationRole.Arn
+                StackName: !Join ['', [ !GetAtt EnvironmentName.ParameterValue, '-mongo-backup-core']]
+                TemplateConfiguration: Build::mongo-backup-core.parameters
+                TemplatePath: Build::mongo-backup.yml
+              InputArtifacts: 
+                - Name: Build
+
+  DeployOnlyPipeline: 
+    Condition: 'DeployOnly'
+    Type: AWS::CodePipeline::Pipeline
+    Properties: 
+      ArtifactStore: 
+        Type: S3
+        Location: !Join ['', [ 'pipeline-artifacts-', !GetAtt PodName.ParameterValue]]
+      Name: mongo-backup
+      RoleArn: !GetAtt PipelineRole.Arn
+      Stages: 
+        - Name: Source
+          Actions: 
+            - Name: go-mongo-backup
+              ActionTypeId: 
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: 1
+              Configuration: 
+                S3Bucket: !Join ['', [ 'pipeline-artifacts-', !GetAtt PodName.ParameterValue]]
+                S3ObjectKey: deploy-mongo-backup.zip
+              OutputArtifacts: 
+                - Name: Source
+        - Name: Build
+          Actions: 
+            - Name: build
+              ActionTypeId: 
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration: 
+                ProjectName: !Ref Build
+              InputArtifacts: 
+                - Name: Source
+              OutputArtifacts: 
+                - Name: Build
+        - Name: Deploy
+          Actions: 
+            - Name: mongo-backup-core
+              ActionTypeId: 
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              Configuration: 
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_IAM
+                RoleArn: !GetAtt CloudFormationRole.Arn
+                StackName: !Join ['', [ !GetAtt EnvironmentName.ParameterValue, '-mongo-backup-core']]
+                TemplateConfiguration: Build::mongo-backup-core.parameters
+                TemplatePath: Build::mongo-backup.yml
+              InputArtifacts: 
+                - Name: Build
+
+  BuildLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    DependsOn:
+    - Build
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${Build}"
+  BuildSubscriptionFilter:
+    Type: "AWS::Logs::SubscriptionFilter"
+    DependsOn:
+    - BuildLogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${Build}"
+      FilterPattern: ""
+      DestinationArn: !Join ['', [!Sub "arn:aws:kinesis:${AWS::Region}:${AWS::AccountId}:stream/",
+                                  !GetAtt EnvironmentName.ParameterValue,
+                                  "-logstash"]]
+      RoleArn: !Join ['', [!Sub "arn:aws:iam::${AWS::AccountId}:role/",
+                           !GetAtt EnvironmentName.ParameterValue,
+                           "-CloudWatchLogsKinesisRole"]]

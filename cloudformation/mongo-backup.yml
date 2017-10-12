@@ -16,12 +16,6 @@ Parameters:
   namespace:
     Description: Docker namespace
     Type: String
-  priority:
-    Description: ALB priority
-    Type: Number
-  region:
-    Description: AWS region i.e. us-east-1
-    Type: String
   vpcid:
     Description: ID of the VPC for the service
     Type: String
@@ -118,7 +112,7 @@ Resources:
               Value: !Ref env
             -
               Name: ENVIRONMENT_REGION
-              Value: !Ref region
+              Value: !Ref AWS::Region
             -
               Name: SERVICE_NAME
               Value: !Ref name
@@ -130,7 +124,7 @@ Resources:
                   - - mongodb.
                     - Fn::ImportValue: !Sub ${env}-PrivateDomain
           Essential: true
-          Image: !Sub 639193537090.dkr.ecr.us-east-1.amazonaws.com/${namespace}/go-mongo-backup:${version}
+          Image: !Sub 639193537090.dkr.ecr.us-east-1.amazonaws.com/${namespace}/mongo-backup:${version}
           Memory: 1024
           MemoryReservation: 300
           Name: !Ref name
@@ -139,6 +133,7 @@ Resources:
               ContainerPort: 8080
               HostPort: 0
               Protocol: tcp
+      Family: !Sub ${name}-${env}
       TaskRoleArn : !GetAtt ContainerRole.Arn
     Type: AWS::ECS::TaskDefinition
 

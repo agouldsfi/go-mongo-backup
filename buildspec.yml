@@ -1,0 +1,45 @@
+version: 0.2
+
+env:
+  variables:
+    DOCKER_REGISTRY: "639193537090.dkr.ecr.us-east-1.amazonaws.com"
+
+phases:
+  install:
+    commands:
+      - echo "Install phase"
+  pre_build:
+    commands:
+      - echo "Pre-Build phase"
+      - nohup /usr/bin/dockerd --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375&
+      - timeout 15 sh -c "until docker info; do echo .; sleep 1; done"
+      - $(aws --region us-east-1 ecr get-login --registry-ids 639193537090 --no-include-email)
+      - create_version.py --semantic_version 1.0
+  build:
+    commands:
+      - echo "Build phase"
+      - export GOPATH=$(pwd)
+      - go get -t -d -v
+      - CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-s' -o go-mongo-backup
+      - docker build -t ${IMAGE_NAME} .
+      - docker tag ${IMAGE_NAME} ${DOCKER_REGISTRY}/$(cat git_branch)/${IMAGE_NAME}:$(cat composite_version)
+      - docker tag ${IMAGE_NAME} ${DOCKER_REGISTRY}/$(cat git_branch)/${IMAGE_NAME}:latest
+      - cd lambda/mongo-backup && zip -r ../../mongoBackup-$(cat ../../composite_version).zip . && cd ../..
+  post_build:
+    commands:
+      - echo "Post-Build phase"
+      - create_parameter_file.py --name ${IMAGE_NAME} --cluster core --port 80
+      - zip -j deploy-${IMAGE_NAME}.zip git_branch composite_version specfiles/deploy-only/buildspec.yml
+      - zip -j deploy-${IMAGE_NAME}.zip mongoBackup-$(cat composite_version).zip
+      - zip -r deploy-${IMAGE_NAME}.zip cloudformation/${IMAGE_NAME}.yml
+      - docker push ${DOCKER_REGISTRY}/$(cat git_branch)/${IMAGE_NAME}:$(cat composite_version)
+      - docker push ${DOCKER_REGISTRY}/$(cat git_branch)/${IMAGE_NAME}:latest
+      - aws s3 cp mongoBackup-$(cat composite_version).zip s3://net-platform-devops-${ENV}/lambda/mongoBackup-$(cat composite_version).zip
+      - |
+        if [ "$(cat git_branch)" = "develop" ]; then
+          aws s3 cp --acl bucket-owner-full-control deploy-${IMAGE_NAME}.zip s3://pipeline-artifacts-ddev/
+        fi
+artifacts:
+  files:
+    - cloudformation/*
+  discard-paths: yes

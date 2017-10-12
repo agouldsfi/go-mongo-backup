@@ -1,0 +1,42 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/golang:1.8
+    branches:
+      ignore:
+        - develop
+        - master
+    steps:
+      - checkout
+      - setup_remote_docker
+      - restore_cache:
+          keys:
+            - deps1-{{ checksum "main.go" }}
+            - deps1
+      - run:
+          name: Pull Mongo
+          command: |
+            docker pull mongo:2.6.12
+      - run:
+          name: Build Go Package
+          command: |
+            export GOPATH=$(pwd)
+            go get -t -d -v
+            CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-s' -o go-mongo-backup
+      - run:
+          name: Build Docker Container
+          command: |
+            docker build -t local_user/go-mongo-backup .
+      - run:
+          name: Run Tests
+          command: |
+            docker run --name mongo -d mongo:2.6.12
+            docker run --name mongo-backup --link mongo -d -p 8080:8080 local_user/go-mongo-backup
+            curl -s -XPOST 'localhost:8080/mongo-backup/v0/dump' -d '{}' | tee out.txt && cat out.txt | grep success
+            grep -q -i "fail\|success" <(docker logs --follow mongo-backup 2>&1)
+            docker logs mongo-backup 2>&1 | grep -i "success"
+      - save_cache:
+          key: deps1-{{ checksum "main.go" }}
+          paths:
+            - 'src'

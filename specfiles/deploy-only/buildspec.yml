@@ -1,0 +1,21 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "Install phase"
+  pre_build:
+    commands:
+      - echo "Pre-Build phase"
+  build:
+    commands:
+      - echo "Build phase"
+  post_build:
+    commands:
+      - echo "Post-Build phase"
+      - create_parameter_file.py --name ${IMAGE_NAME} --cluster core --port 80
+      - aws s3 cp mongoBackup-$(cat composite_version).zip s3://net-platform-devops-${ENV}/lambda/mongoBackup-$(cat composite_version).zip
+artifacts:
+  files:
+    - cloudformation/*
+  discard-paths: yes
