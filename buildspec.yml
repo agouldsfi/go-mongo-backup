@@ -39,6 +39,10 @@ phases:
         if [ "$(cat git_branch)" = "develop" ]; then
           aws s3 cp --acl bucket-owner-full-control deploy-${IMAGE_NAME}.zip s3://pipeline-artifacts-ddev/
         fi
+      - |
+        if [ "$(cat git_branch)" = "master" ]; then
+          aws s3 cp --acl bucket-owner-full-control deploy-${IMAGE_NAME}.zip s3://pipeline-artifacts-sit/
+        fi
 artifacts:
   files:
     - cloudformation/*
